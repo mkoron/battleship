@@ -1,5 +1,7 @@
 import random
 
+#Create board and setup game
+
 class Direction:
     HORIZONTAL = 0
     VERTICAL = 1
@@ -15,6 +17,12 @@ class Field:
             return False
  
         return ((self._row == otherField._row) and (self._column == otherField._column))
+
+    def __str__(self):
+        return "Field({}, {})".format(self._row, self._column)
+
+    def __hash__(self):
+        return hash((self._row, self._column))
 
 class Board:
     def __init__(self, rowNbr, columnNbr):
@@ -93,12 +101,27 @@ class Board:
                     sign = 'X'
                 visual = visual + sign
             visual = visual + '|'
-        
         return visual
 
 class Ship:
     def __init__(self, fields):
         self._fields = fields
+        self._hitFields = set()
+
+    def shootField(self, row, column):
+       
+        for field in self._fields:
+            print(self._hitFields)
+            if field._row == row and field._column == column:
+                self._hitFields.add(field)
+            
+                return (ShootingResults.SHIP_DESTROYED if self.isItDestroyed() 
+                                                       else ShootingResults.HIT)
+
+        return ShootingResults.MISS
+
+    def isItDestroyed(self):
+        return len(self._hitFields) == len(self._fields) 
 
 class Shipbuilder:
     
@@ -143,6 +166,21 @@ class Fleet:
     def addShip(self, fields):
         self._ships.append(Ship(fields))
 
+    def shootField(self, row, column):
+        for ship in self._ships:
+            shootingResult = ship.shootField(row, column)
+            print(shootingResult)
+            if shootingResult == ShootingResults.HIT:
+                return ShootingResults.HIT
+            if shootingResult == ShootingResults.SHIP_DESTROYED:
+                return (ShootingResults.FLEET_DESTROYED if self.allShipsDestroyed() 
+                                                        else ShootingResults.SHIP_DESTROYED)
+        return ShootingResults.MISS
+
+    def allShipsDestroyed(self):
+        nb = sum(1 for s in self._ships if s.isItDestroyed())
+        return nb == len(self._ships)
+
     def __str__(self):
         rowsNumber = 0
         columnsNumber = 0
@@ -160,6 +198,133 @@ class Fleet:
 
         return b.__str__()
 
-maj3 = Shipbuilder()
-fleet = maj3.getFleet(10, 10, [5, 4, 4, 3, 3, 3, 2, 2, 2, 2])
+# Game logic
+
+class ShootingResults:
+    MISS = 0
+    HIT = 1
+    SHIP_DESTROYED = 2
+    FLEET_DESTROYED = 3
+
+class FieldState:
+    AVAILABLE = 0
+    ELIMINATED = 1
+    MISS = 2
+    HIT = 3
+    SHIP_DESTROYED = 4
+
+class HitField:
+    def __init__(self, row, column):
+        self._row = row
+        self._column = column
+        self._fieldState = FieldState.AVAILABLE
+
+    def recordResult(self, result):
+        self._fieldState = result
+
+    def isItAvailable(self):
+        return self._fieldState == FieldState.AVAILABLE
+
+class HitBoard:
+
+    def __init__(self, rowsNbr, columnsNbr):
+        self._rowsNumber = rowsNbr
+        self._columnsNumber = columnsNbr
+
+        self._fields = {(r, c):HitField(r, c) for r in range(_rowsNumber) for c in range(_columnsNumber)}
+
+    def getShipFields(self, shipSize):
+        fields = self._fieldsForHorizontalShip(shipSize)
+        fields.extend(self._fieldsForVerticalShIps(shipSize))
+        return fields
+
+    def _fieldsForHorizontalShip(self, shipSize):
+        return self._shipFields(shipSize, lambda i, j:  self._fields[i, j], self._rowsNumber, self._columnsNumber)
+
+    def _fieldsForVerticalShIps(self, shipSize):
+        return self._shipFields(shipSize, lambda i, j:  self._fields[j, i], self._columnsNumber, self._rowsNumber)
+
+    def _shipFields(self, size, getField, imax, jmax):
+        fields = []
+        for i in range(imax):
+            places = 0
+            for j in range(jmax):
+                if getField(i, j).isItAvailable():
+                    places += 1
+
+                    if places >= size:
+                        for jj in range(j - size + 1, j + 1):
+                            fields.append(getField(i, jj))
+                else:
+                    places = 0
+        return fields
+    
+    def markDestroyed(self, fields):
+        for field in fields:
+            field.recordResult(FieldState.SHIP_DESTROYED)
+            self._removeOtherFields(fields)
+
+    def _removeOtherFields(self, fields):
+        pass
+
+class Artillery:
+    def __init__(self, rowsNbr, colsNbr, shipSizes):
+        self._grid = HitBoard(rowsNbr, colsNbr)
+        self._shipSizes = list(shipSizes)
+        self._shootField = None
+        self._fieldsShootShip = []
+
+    def shoot(self):
+        pass
+
+    def processResults(self, shootingResults):
+        self._grid.recordShooting(self._shootField, shootingResults)
+
+        if shootingResults == ShootingResults.MISS:
+            return False
+
+        self._fieldsShootShip.append(self._shootField)
+        self._fieldsShootShip.sort(key=lambda field: field._row + field._column)
+
+        if shootingResults == ShootingResults.FLEET_DESTROYED:
+            self._grid.markDestroyed(self._fieldsShootShip)
+            return True
+
+        if shootingResults == ShootingResults.SHIP_DESTROYED:
+            self._grid.markDestroyed(self._fieldsShootShip)
+            shipSize = len(self._fieldsShootShip)
+            self._shipSizes.remove(shipSize)
+            self._fieldsShootShip.clear()
+
+            if len(self._shipSizes) == 0:
+                return True
+
+        return False
+
+
+ispisi = {ShootingResults.MISS: "Miss",
+        ShootingResults.HIT: "Hit",
+        ShootingResults.SHIP_DESTROYED: "Ship destroyed",
+        ShootingResults.FLEET_DESTROYED: "Fleet destroyed!!!"}
+
+ships = [5, 4, 4, 3, 3, 3, 2, 2, 2, 2]
+
+fleet = Shipbuilder()._makeFleet(Board(10, 10), ships)
+
+print("Enter the field that you want to hit (row-column)")
+
+fleetDestroyed = False
+nbTries = 0
 print(fleet)
+
+while fleetDestroyed == False:
+    nbTries += 1
+    unos = input("Next field: ").lower().split('-')
+    row = int(unos[1]) - 1
+    column = ord(unos[0]) - ord('a')
+    result = fleet.shootField(row, column)
+    print(ispisi[result])
+    if (result == ShootingResults.FLEET_DESTROYED):
+        fleetDestroyed = True
+
+print("After {0} tries".format(nbTries))
