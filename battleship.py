@@ -88,7 +88,7 @@ class Board:
                 self._removeField(row, column)
 
     def __str__(self):
-        visual = "  "
+        visual = "   "
         for column in range(self._columnNumber):
             visual = visual + chr(column  + ord('A'))
 
@@ -213,6 +213,11 @@ class FieldState:
     HIT = 3
     SHIP_DESTROYED = 4
 
+class ShootingFase:
+    RANDOM = 0
+    AFTER_FIRST_HIT = 1
+    DESROY_SHIP = 2
+
 class HitField:
     def __init__(self, row, column):
         self._row = row
@@ -231,7 +236,7 @@ class HitBoard:
         self._rowsNumber = rowsNbr
         self._columnsNumber = columnsNbr
 
-        self._fields = {(r, c):HitField(r, c) for r in range(_rowsNumber) for c in range(_columnsNumber)}
+        self._fields = {(r, c):HitField(r, c) for r in range(self._rowsNumber) for c in range(self._columnsNumber)}
 
     def getShipFields(self, shipSize):
         fields = self._fieldsForHorizontalShip(shipSize)
@@ -259,72 +264,224 @@ class HitBoard:
                     places = 0
         return fields
     
+    def recordShot(self, field, shootingResult):
+        if shootingResult == ShootingResults.MISS:
+            field.recordResult(FieldState.MISS)
+            return
+
+        if shootingResult == shootingResult.HIT:
+            field.recordResult(FieldState.HIT)
+            self._removeDiagonalFields(field)
+
+    def _removeDiagonalFields(self, field):
+        row = field._row
+        column = field._column
+        keys = [(row - 1, column - 1),
+                (row - 1, column + 1)
+                (row + 1, column - 1)
+                (row + 1, column + 1)]
+
+        for key in keys:
+            self._removeField(key)
+
+    def _removeField(self, key):
+        if key in self._fields:
+            field = self._fields[key]
+            field.recordResult(FieldState.ELIMINATED)
+
     def markDestroyed(self, fields):
         for field in fields:
             field.recordResult(FieldState.SHIP_DESTROYED)
             self._removeOtherFields(fields)
 
     def _removeOtherFields(self, fields):
-        pass
+        print(fields[0])
+        if fields[0]._column == fields[-1]._column:
+            column = fields[0]._column
+            self._removeField((fields[0]._row - 1, column))
+            self._removeField((fields[-1]._row + 1, column))
+
+        if fields[0]._row == fields[-1]._row:
+            row = fields[0]._row
+            self._removeField((row, fields[0]._column - 1))
+            self._removeField((row, fields[-1]._column + 1,))      
+
+    def fieldsSameDirection(self, field, direction):
+        row = field._row
+        column = field._column
+
+        if direction == FieldDirection.LEFT:
+            span = range(column - 1, -1,  -1) 
+        elif direction == FieldDirection.RIGHT:
+            span = range(column + 1, self._columnsNumber)
+        elif direction == FieldDirection.UP:
+            span = range(row - 1, -1,  -1)
+        else:
+            span = range(row + 1, self._rowsNumber)
+
+        fields = []
+
+        if direction == FieldDirection.LEFT or direction == FieldDirection.RIGHT:
+            for c in span:
+                if self._field[row, c].isItAvailable():
+                    fields.append(self._fields[row, c])
+                else:
+                    break
+        else:
+            for r in span:
+                if self._field[r, column].isItAvailable():
+                    fields.append(self._fields[r, column])
+                else:
+                    break     
+
+        return fields
 
 class Artillery:
     def __init__(self, rowsNbr, colsNbr, shipSizes):
         self._grid = HitBoard(rowsNbr, colsNbr)
         self._shipSizes = list(shipSizes)
+        self._f1 = ShootingFase.RANDOM
+        self._f2 = ShootingFase.AFTER_FIRST_HIT
+        self._f3 = ShootingFase.DESROY_SHIP
+        self._tacticts = {
+                           self._f1: RandomChooseField,
+                           self._f2: ChooseFieldAfterFirstHit,
+                           self._f3: ChooseFieldSystematicShooting}
+        self._startRandomShooting()
         self._shootField = None
         self._fieldsShootShip = []
 
     def shoot(self):
-        pass
+        self._shootField = self._shootingTactict.chooseField()
+        return self._shootField
 
     def processResults(self, shootingResults):
-        self._grid.recordShooting(self._shootField, shootingResults)
-
+    
         if shootingResults == ShootingResults.MISS:
+            self._grid.recordShot(self._shootField, shootingResults)
             return False
 
         self._fieldsShootShip.append(self._shootField)
         self._fieldsShootShip.sort(key=lambda field: field._row + field._column)
 
-        if shootingResults == ShootingResults.FLEET_DESTROYED:
-            self._grid.markDestroyed(self._fieldsShootShip)
-            return True
+        self._grid._removeField(self._shootField)
 
         if shootingResults == ShootingResults.SHIP_DESTROYED:
-            self._grid.markDestroyed(self._fieldsShootShip)
             shipSize = len(self._fieldsShootShip)
+            print(self._shipSizes)
             self._shipSizes.remove(shipSize)
             self._fieldsShootShip.clear()
 
             if len(self._shipSizes) == 0:
                 return True
-
+            self._startRandomShooting()
         return False
 
+    def _startRandomShooting(self):
+        self._shootingFase = ShootingFase.RANDOM
+        self._shootingTactict = self._tacticts[self._shootingFase] \
+            (self._grid, self._getLongestShipForShooting())
 
-ispisi = {ShootingResults.MISS: "Miss",
-        ShootingResults.HIT: "Hit",
-        ShootingResults.SHIP_DESTROYED: "Ship destroyed",
-        ShootingResults.FLEET_DESTROYED: "Fleet destroyed!!!"}
+    def _startShootingFieldAfterFirstHit(self):
+        self._shootingFase = ShootingFase.AFTER_FIRST_HIT
+        self._shootingTactict = self._tacticts[self._shootingFase] \
+            (self._grid, self._shootField)
+
+    def _startSystematicShooting(self):
+        self._shootingFase = ShootingFase.SHIP_DESTROYED
+        self._shootingTactict = self._tacticts[self._shootingFase] \
+            (self._grid, self._fieldsShootShip)
+
+    def _getLongestShipForShooting(self):
+        return max(self._shipSizes)
+
+    def addNewTactic(self, shootingFase, shootingTactict):
+        self._tacticts[shootingFase] = shootingTactict
+
+class RandomChooseField:
+    
+    def __init__(self, grid, shipSize):
+        self._grid = grid
+        self._shipSize = shipSize
+
+    def chooseField(self):
+        fields = self._grid.getShipFields(self._shipSize)
+        return random.choice(fields)
+
+class FieldDirection:
+    LEFT = 0
+    UP = 1
+    RIGHT = 2
+    DOWN = 3
+
+class ChooseFieldAfterFirstHit:
+    def __init__(self, grid, hitField):
+        self._grid = grid
+        self._hitField = hitField
+
+    def chooseField(self):
+        nearbyFields = [self._grid.fieldsSameDirection(self._hitField, FieldDirection.LEFT),
+                        self._grid.fieldsSameDirection(self._hitField, FieldDirection.UP),
+                        self._grid.fieldsSameDirection(self._hitField, FieldDirection.RIGHT),
+                        self._grid.fieldsSameDirection(self._hitField, FieldDirection.DOWN)]
+
+        longestDirection = max(nearbyFields, key=lambda i: len(i))
+
+        return longestDirection[0]
+
+class ChooseFieldSystematicShooting:
+    
+    def __init__(self, grid, shipsHit):
+        self._grid = grid
+        self._fieldsShotShip = shipsHit
+
+    def chooseField(self):
+        firstField = self._fieldsShotShip[0]
+        lastField = self._fieldsShotShip[-1]
+
+        if firstField._row == lastField._row:
+            nearby = [self._grid.fieldsSameDirection(firstField, FieldDirection.LEFT),
+                      self._grid.fieldsSameDirection(lastField, FieldDirection.RIGHT)]
+        else:
+            nearby = [self._grid.fieldsSameDirection(firstField, FieldDirection.UP),
+                      self._grid.fieldsSameDirection(firstField, FieldDirection.DOWN)]
+
+        longestDirection = max(nearby, key=lambda i: len(i))
+
+        return longestDirection[0]
+
+def EnterScore():
+    while True:
+        result = input("(M)issed, (H)it or (S)inking:")
+
+        if result.lower() == 'm':
+            return ShootingResults.MISS
+        elif result.lower() == 'h':
+            return ShootingResults.HIT
+        elif result.lower() == 's':
+            return ShootingResults.SHIP_DESTROYED
+        print("Invalid input!")
 
 ships = [5, 4, 4, 3, 3, 3, 2, 2, 2, 2]
 
-fleet = Shipbuilder()._makeFleet(Board(10, 10), ships)
+
 
 print("Enter the field that you want to hit (row-column)")
 
 fleetDestroyed = False
 nbTries = 0
+artillery = Artillery(10, 10, ships)
+fleet = Shipbuilder().getFleet(10, 10, ships)
 print(fleet)
-
 while fleetDestroyed == False:
     nbTries += 1
-    unos = input("Next field: ").lower().split('-')
-    row = int(unos[1]) - 1
-    column = ord(unos[0]) - ord('a')
-    result = fleet.shootField(row, column)
-    print(ispisi[result])
-    if (result == ShootingResults.FLEET_DESTROYED):
-        fleetDestroyed = True
+    field = artillery.shoot()
+    column = chr(field._column + ord('A'))
+    row = field._row + 1
+    result = artillery.shoot()
+    print("{} - {}".format(row, column))
+    shootingResults = EnterScore()
+    fleetDestroyed = artillery.processResults(shootingResults)
 
+print("Fleet destroyed!")
 print("After {0} tries".format(nbTries))
